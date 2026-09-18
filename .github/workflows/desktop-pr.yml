@@ -84,7 +84,7 @@ jobs:
 
       - name: Build unsigned NSIS installer
         working-directory: web
-        run: npm run tauri -- build --bundles nsis
+        run: npm run tauri:build:nsis
 
       - uses: actions/upload-artifact@v4
         with:
