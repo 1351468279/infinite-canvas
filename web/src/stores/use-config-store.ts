@@ -294,7 +294,7 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         const name = (typeof item === "string" ? item : item?.name || "").trim();
         if (!name || seen.has(name)) continue;
         seen.add(name);
-        const legacy = typeof item === "string" ? {} : item as ChannelModel & { capability?: ModelCapability; script?: string };
+        const legacy = (typeof item === "string" ? {} : item) as Partial<ChannelModel> & { capability?: ModelCapability; script?: string };
         const legacyCapability = isModelCapability(legacy.capability) ? legacy.capability : undefined;
         const capabilities = Array.from(new Set([...(Array.isArray(legacy.capabilities) ? legacy.capabilities : []), ...(legacyCapability ? [legacyCapability] : [])])).filter(isModelCapability);
         const scripts = Object.fromEntries(Object.entries(legacy.scripts || {}).filter(([capability, script]) => isModelCapability(capability) && capabilities.includes(capability) && typeof script === "string" && script.trim()).map(([capability, script]) => [capability, String(script).trim()])) as Partial<Record<ModelCapability, string>>;
