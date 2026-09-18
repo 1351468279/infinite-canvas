@@ -135,7 +135,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     // canvasContext is intentionally excluded because project updates it every frame during dragging and resizing.
     // The panel uses it only for ref synchronization and debounced postState calls, never during rendering.
     // Subscribing here would rerender the panel every frame and amplify the #185 crash, so it is observed imperatively below.
-    const { width, url, token, connected, enabled, desktopManaged, prompt, attachments, sending, waiting, tokenUsage, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, permissionMode, models, model, reasoningEffort, activity, conversation, connectError, pendingTool, pendingApprovals } = useAgentStore(
+    const { width, url, token, connected, enabled, desktopManaged, panelOpen, prompt, attachments, sending, waiting, tokenUsage, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, permissionMode, models, model, reasoningEffort, activity, conversation, connectError, pendingTool, pendingApprovals } = useAgentStore(
         useShallow((state) => ({
             width: state.width,
             url: state.url,
@@ -143,6 +143,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             connected: state.connected,
             enabled: state.enabled,
             desktopManaged: state.desktopManaged,
+            panelOpen: state.panelOpen,
             prompt: state.prompt,
             attachments: state.attachments,
             sending: state.sending,
@@ -169,6 +170,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const setAgentState = useAgentStore((state) => state.setAgentState);
     const conversationReady = conversation.status === "ready" || conversation.status === "warning";
     const conversationBusy = conversation.status === "preparing" || conversation.status === "running";
+    const codexResourcesReady = !desktopManaged || conversationReady || conversation.status === "failed";
     const closePanel = useAgentStore((state) => state.closePanel);
     const pushMessage = useAgentStore((state) => state.addMessage);
     const pushEventLog = useAgentStore((state) => state.addEventLog);
@@ -186,6 +188,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const attachmentUrlsRef = useRef(new Set<string>());
     const clientIdRef = useRef("");
     const [clientReady, setClientReady] = useState(false);
+    const [desktopAgentActivated, setDesktopAgentActivated] = useState(false);
     const loadThreadsSequenceRef = useRef(0);
     const threadMessagesRef = useRef(new Map<string, AgentChatItem[]>());
     const authoritativeHistoryTurnsRef = useRef(new Set<string>());
@@ -194,6 +197,9 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const threadOperationSequenceRef = useRef(0);
     const endpoint = useMemo(() => url.trim().replace(/\/$/, ""), [url]);
     const urlAgentAutoConnect = searchParams.has("agentUrl") && searchParams.has("agentToken");
+    useEffect(() => {
+        if (panelOpen) setDesktopAgentActivated(true);
+    }, [panelOpen]);
     useEffect(() => {
         let disposed = false;
         void acquireAgentClientId().then((clientId) => {
@@ -342,7 +348,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     useEffect(() => () => attachmentUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
     useEffect(() => {
-        if (!clientReady || !enabled || !token.trim()) return;
+        if (!clientReady || !enabled || !token.trim() || (desktopManaged && !desktopAgentActivated)) return;
         if (desktopManaged) {
             localStorage.removeItem("canvas-agent-url");
             localStorage.removeItem("canvas-agent-token");
@@ -408,8 +414,10 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             if (!headless) message.success(rt("localAgentConnected"));
             void postState(endpoint, token, clientId, canvasContextRef.current?.snapshot || null);
             if (document.visibilityState === "visible" && document.hasFocus()) void activateAgentClient(endpoint, token, clientId);
-            if (!busy && !nextThreadId && (!hello?.conversation || hello.conversation.status === "idle")) {
-                void fetchAgentJson<AgentWorkspaceResponse>(endpoint, token, "/agent/codex/threads/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, permissionMode }) })
+            if (!busy && (!hello?.conversation || hello.conversation.status === "idle")) {
+                const initializePath = desktopManaged ? "/agent/codex/threads/initialize" : !nextThreadId ? "/agent/codex/threads/reset" : "";
+                if (!initializePath) return;
+                void fetchAgentJson<AgentWorkspaceResponse>(endpoint, token, initializePath, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, permissionMode }) })
                     .then((result) => result.conversation && applyConversationState(result.conversation))
                     .catch((error) => {
                         const state = agentErrorState(error);
@@ -585,18 +593,18 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             loadThreadsSequenceRef.current += 1;
             useAgentSkillStore.getState().reset();
         };
-    }, [applyConversationState, applyWorkspaceChange, clientReady, desktopManaged, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
+    }, [applyConversationState, applyWorkspaceChange, clientReady, desktopAgentActivated, desktopManaged, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
 
     useEffect(() => {
-        if (connected) void loadThreads();
-    }, [connected, loadThreads]);
+        if (connected && codexResourcesReady) void loadThreads();
+    }, [codexResourcesReady, connected, loadThreads]);
 
     useEffect(() => {
-        if (connected) void loadSkills(endpoint, token);
-    }, [connected, endpoint, loadSkills, token]);
+        if (connected && codexResourcesReady) void loadSkills(endpoint, token);
+    }, [codexResourcesReady, connected, endpoint, loadSkills, token]);
 
     useEffect(() => {
-        if (!connected) return;
+        if (!connected || !codexResourcesReady) return;
         void fetchAgentJson<AgentModelsResponse>(endpoint, token, "/agent/codex/models").then(({ data = [] }) => {
             const names = new Set<string>();
             const models = data.flatMap((item) => {
@@ -617,7 +625,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             localStorage.setItem("canvas-agent-reasoning-effort", nextEffort);
             setAgentState({ models, model: current.model, reasoningEffort: nextEffort });
         }).catch((error) => addEventLog(rt("modelListFailed"), error));
-    }, [connected, endpoint, setAgentState, token]);
+    }, [codexResourcesReady, connected, endpoint, setAgentState, token]);
 
     useEffect(() => {
         if (!connected) return;

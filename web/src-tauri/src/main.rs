@@ -213,6 +213,7 @@ impl AgentSupervisor {
             .env("PORT", "0")
             .env("CANVAS_AGENT_TOKEN", &token)
             .env("CANVAS_AGENT_EPHEMERAL_TOKEN", "1")
+            .env("CANVAS_AGENT_LAZY_CODEX", "1")
             .env("CANVAS_AGENT_CONFIG_DIR", &agent_config)
             .env("CODEX_HOME", &codex_home)
             .stdin(Stdio::null())
