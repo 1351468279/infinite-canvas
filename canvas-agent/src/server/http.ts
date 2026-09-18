@@ -17,7 +17,8 @@ import { SkillStore, SkillStoreError } from "../skills/store.js";
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
     const config = loadConfig(true);
-    const port = Number(process.env.PORT) || Number(new URL(config.url).port) || DEFAULT_PORT;
+    const requestedPort = process.env.PORT === undefined ? Number(new URL(config.url).port) || DEFAULT_PORT : Number(process.env.PORT);
+    const port = Number.isInteger(requestedPort) && requestedPort >= 0 ? requestedPort : DEFAULT_PORT;
     config.url = `http://127.0.0.1:${port}`;
     saveConfig(config);
 
@@ -431,11 +432,16 @@ export function startHttpServer() {
         res.status(500).json({ ok: false, error: error.message });
     });
 
-    app.listen(port, "127.0.0.1", () => {
+    const server = app.listen(port, "127.0.0.1", () => {
+        const address = server.address();
+        const actualPort = address && typeof address === "object" ? address.port : port;
+        config.url = `http://127.0.0.1:${actualPort}`;
+        saveConfig(config);
         console.log("Infinite Canvas Agent");
         checkVersions();
         console.log(`Local URL: ${config.url}`);
         console.log(`Connect token: ${config.token}`);
+        console.log(`CANVAS_AGENT_READY ${JSON.stringify({ url: config.url, token: config.token })}`);
         console.log("Codex MCP is not installed by this command.");
         console.log("Optional MCP add: codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp");
         console.log("Remove manually added MCP: codex mcp remove infinite-canvas");

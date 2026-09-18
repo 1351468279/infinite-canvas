@@ -15,6 +15,7 @@ import { resolveCanvasReferenceImages } from "@/lib/canvas/canvas-resource-refer
 import { readImageMeta } from "@/lib/image-utils";
 import { randomId } from "@/lib/utils";
 import { uploadImage } from "@/services/image-storage";
+import { restartDesktopAgent } from "@/services/desktop";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useShallow } from "zustand/react/shallow";
@@ -134,13 +135,14 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     // canvasContext is intentionally excluded because project updates it every frame during dragging and resizing.
     // The panel uses it only for ref synchronization and debounced postState calls, never during rendering.
     // Subscribing here would rerender the panel every frame and amplify the #185 crash, so it is observed imperatively below.
-    const { width, url, token, connected, enabled, prompt, attachments, sending, waiting, tokenUsage, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, permissionMode, models, model, reasoningEffort, activity, conversation, connectError, pendingTool, pendingApprovals } = useAgentStore(
+    const { width, url, token, connected, enabled, desktopManaged, prompt, attachments, sending, waiting, tokenUsage, eventLogs, threads, activeThreadId, workspacePath, loadingThreads, activeTab, confirmTools, permissionMode, models, model, reasoningEffort, activity, conversation, connectError, pendingTool, pendingApprovals } = useAgentStore(
         useShallow((state) => ({
             width: state.width,
             url: state.url,
             token: state.token,
             connected: state.connected,
             enabled: state.enabled,
+            desktopManaged: state.desktopManaged,
             prompt: state.prompt,
             attachments: state.attachments,
             sending: state.sending,
@@ -341,8 +343,13 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     useEffect(() => {
         if (!clientReady || !enabled || !token.trim()) return;
-        localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        if (desktopManaged) {
+            localStorage.removeItem("canvas-agent-url");
+            localStorage.removeItem("canvas-agent-token");
+        } else {
+            localStorage.setItem("canvas-agent-url", endpoint);
+            localStorage.setItem("canvas-agent-token", token);
+        }
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;
@@ -578,7 +585,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             loadThreadsSequenceRef.current += 1;
             useAgentSkillStore.getState().reset();
         };
-    }, [applyConversationState, applyWorkspaceChange, clientReady, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
+    }, [applyConversationState, applyWorkspaceChange, clientReady, desktopManaged, enabled, endpoint, loadSkills, loadThreads, message, setAgentState, token]);
 
     useEffect(() => {
         if (connected) void loadThreads();
@@ -905,6 +912,16 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     };
 
     const toggleAgentConnection = async ({ silent = false }: { silent?: boolean } = {}) => {
+        if (desktopManaged) {
+            setAgentState({ enabled: true, connected: false, silentConnect: true, activity: rt("connecting"), connectError: "" });
+            try {
+                const ready = await restartDesktopAgent();
+                setAgentState({ url: ready.url, token: ready.token, enabled: true, connected: false, silentConnect: true, activity: rt("connecting"), connectError: "" });
+            } catch (error) {
+                setAgentState({ enabled: false, connected: false, connectError: error instanceof Error ? error.message : String(error) });
+            }
+            return;
+        }
         if (enabled) {
             clearAgentSession({ enabled: false, connected: false, activity: rt("offline"), connectError: "" });
             return;
@@ -1366,6 +1383,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     connected={connected}
                     activity={activity}
                     connectError={connectError}
+                    desktopManaged={desktopManaged}
                     onUrlChange={(url) => setAgentState({ url, connectError: "" })}
                     onTokenChange={(token) => setAgentState({ token, connectError: "" })}
                     onToggleEnabled={toggleAgentConnection}
